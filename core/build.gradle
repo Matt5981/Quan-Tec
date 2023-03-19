@@ -1,0 +1,69 @@
+plugins {
+    id 'com.github.johnrengelman.shadow' version '7.1.2'
+    id 'java'
+    id 'application'
+}
+
+group 'org.example'
+version '1.0-SNAPSHOT'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'net.dv8tion:JDA:5.0.0-beta.3'
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.8.1'
+    testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.8.1'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+application {
+    mainClass = 'org.example.Main'
+}
+
+sourceSets {
+    main {
+        java {
+            exclude 'org/example/plugins/defaultplugins/**'
+        }
+    }
+
+    plugins {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+
+    examplePlugin {
+        java {
+            include 'org/example/plugins/defaultplugins/ExamplePlugin.java'
+        }
+    }
+}
+
+tasks.register('buildPlugins', JavaCompile) {
+
+    description = "Compile plugins present in the org.example.plugins.defaultplugins and org.example.plugins.userplugins packages."
+
+    source = sourceSets.main.java.srcDirs
+    include 'org/example/plugins/defaultplugins/**'
+    classpath = sourceSets.main.runtimeClasspath
+
+    destinationDirectory = new File("$buildDir/classes/java/main")
+}
+
+tasks.register('defaultExamplePlugin', org.gradle.jvm.tasks.Jar) {
+    dependsOn buildPlugins
+
+    from sourceSets.plugins.output include '*'
+    from sourceSets.examplePlugin.output include '*'
+
+    archiveBaseName = 'ExamplePlugin.jar'
+}
+
+tasks.register('pluginJars'){
+    dependsOn defaultExamplePlugin
+}

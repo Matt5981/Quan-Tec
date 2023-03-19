@@ -1,0 +1,6 @@
+include 'core', 'ExamplePlugin', 'AnalyticsPlugin'
+rootProject.name = 'QuanTec'
+include 'ExamplePlugin'
+include 'AnalyticsPlugin'
+include 'CensorPlugin'
+
