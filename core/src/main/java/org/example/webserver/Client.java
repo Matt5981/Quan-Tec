@@ -3,9 +3,10 @@ package org.example.webserver;
 import net.dv8tion.jda.api.JDA;
 import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Guild;
+import net.dv8tion.jda.api.entities.Member;
 import net.dv8tion.jda.api.entities.User;
-import net.dv8tion.jda.api.entities.UserSnowflake;
 import net.dv8tion.jda.api.entities.emoji.Emoji;
+import org.example.Main;
 import org.example.plugins.PluginManager;
 import org.example.plugins.QuanTecPlugin;
 import org.example.utils.Halter;
@@ -17,9 +18,7 @@ import java.io.*;
 import java.net.Socket;
 import java.net.SocketException;
 import java.util.*;
-import java.util.concurrent.BlockingQueue;
 import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 
 /*
     // TODO According to the HTTP/1.1 RFC, servers are NOT allowed to modify their response based on the body of a GET request. Some methods here do that.
@@ -29,7 +28,7 @@ import java.util.function.Consumer;
         /users/{snowflake}
             GET - returns the result of getting this user's info from JDA.
         /users/manageserver/{snowflake}
-            GET - returns, in JSON, a list of guild snowflakes where the provided user has MANAGE_SERVER. TODO authenticate this on QTOW.
+            GET - returns, in JSON, a list of guild snowflakes where the provided user has MANAGE_SERVER.
         /guilds
             GET - Returns a list of snowflakes corresponding to the servers that QuanTec is a member of, and as such the servers whose emotes and users can be accessed through the /users and /emojis endpoints.
         /guilds/{snowflake}
@@ -41,7 +40,7 @@ import java.util.function.Consumer;
             GET - Returns JSON with the bot's version.
         /core/plugins
             GET - Returns JSON with a list of plugins currently running on the bot.
-        TODO /core/plugins/reload
+        TODO TEST /core/plugins/reload
             GET - Causes QuanTec to reload all plugins.
 
 
@@ -58,24 +57,16 @@ import java.util.function.Consumer;
  */
 public class Client extends Thread {
     private final Socket client;
-    private final BlockingQueue<Consumer<JDA>> JDATasks; // TODO deprecated.
     private final String botVers;
     private final Map<String, BiConsumer<Request, OutputStream>> clientEndpoints;
     private final PluginManager pluginManager;
     private final Halter halter;
+    private final JDA jda;
 
-    @Deprecated
-    private void scheduleNewJDATask(Consumer<JDA> task){
-        JDATasks.add(task);
-        synchronized (JDATasks) {
-            JDATasks.notifyAll();
-        }
-    }
-
-    public Client(Socket client, BlockingQueue<Consumer<JDA>> JDATasks, String botVers, Map<String, BiConsumer<Request, OutputStream>> clientEndpoints, PluginManager pluginManager, Halter halter){
+    public Client(Socket client, JDA jda, Map<String, BiConsumer<Request, OutputStream>> clientEndpoints, PluginManager pluginManager, Halter halter){
         this.client = client;
-        this.JDATasks = JDATasks;
-        this.botVers = botVers;
+        this.jda = jda;
+        this.botVers = Main.botVers;
         this.clientEndpoints = clientEndpoints;
         this.pluginManager = pluginManager;
         this.halter = halter;
@@ -129,81 +120,67 @@ public class Client extends Thread {
                         String fmtPath = req.getPath().substring(1);
                         if(fmtPath.split("/").length == 2) {
 
-
-                            // A bit easier, since this gets to wait for a JDA job to complete.
                             String userID = req.getPath().replaceAll("/users/", "");
-                            Object waiter = new Object();
-                            final User[] user = new User[1];
-                            user[0] = null;
-                            scheduleNewJDATask(jda -> {
-                                user[0] = jda.getUserById(userID);
-                                synchronized (waiter) {
-                                    waiter.notifyAll();
-                                }
-                            });
-
+                            // Small check here to make sure it's a valid ID.
                             try {
-                                synchronized (waiter) {
-                                    waiter.wait();
-                                }
-                            } catch (InterruptedException e) {
-                                // Ignored
+                                Long.parseLong(userID);
+                            } catch (NumberFormatException e){
+                                Response.writeResponse(Response.badRequest("Invalid snowflake."), writer);
+                                continue;
                             }
+                            final User user = jda.getUserById(userID);
 
                             // Should be done by now, so let's dismantle that user object into some nice compact JSON.
-                            if (user[0] != null) {
-                                User subj = user[0];
-
+                            if (user != null) {
                                 String respJson = String.format("{\"%s\":{\"name\":\"%s\",\"id\":\"%s\",\"avatarUrl\":\"%s\"}}",
-                                        subj.getId(),
-                                        subj.getAsTag(),
-                                        subj.getIdLong(),
-                                        subj.getAvatarUrl()
+                                        user.getId(),
+                                        user.getAsTag(),
+                                        user.getIdLong(),
+                                        user.getAvatarUrl()
                                 );
-
                                 Response.writeResponse(Response.okJSON(respJson), writer);
                             } else {
                                 Response.writeResponse(Response.notFound("JDA returned null"), writer);
                             }
                         } else if(fmtPath.split("/").length == 3 && fmtPath.startsWith("users/manageserver/")) {
-                            scheduleNewJDATask(jda -> {
-                                // Return array of all servers where the user is both a member and has the MANAGE_SERVER permission through any role.
-                                String UID = fmtPath.replace("users/manageserver/", "");
-                                try {
-                                    Long.parseLong(UID);
-                                } catch (NumberFormatException e){
-                                    Response.writeResponse(Response.badRequest("Invalid snowflake provided."), writer);
-                                    return;
+                            // Return array of all servers where the user is both a member and has the MANAGE_SERVER permission through any role.
+                            String UID = fmtPath.replace("users/manageserver/", "");
+                            try {
+                                Long.parseLong(UID);
+                            } catch (NumberFormatException e){
+                                Response.writeResponse(Response.badRequest("Invalid snowflake provided."), writer);
+                                return;
+                            }
+
+                            // Check if user is known by quantec.
+                            if(jda.getUserById(UID) == null){
+                                Response.writeResponse(Response.notFound("User not found."), writer);
+                                return;
+                            }
+
+                            // Since it is known, iterate through all member guilds and add the IDs of them if our user is a part of that guild.
+                            List<String> snowflakes = new ArrayList<>();
+                            jda.getGuilds().forEach(guild -> {
+                                Member member = guild.getMemberById(UID);
+                                if(member != null && PermissionChecker.userHasPermission(member, Permission.MANAGE_SERVER)){
+                                    snowflakes.add(guild.getId());
                                 }
-
-                                // Check if user is known by quantec.
-                                if(jda.getUserById(UID) == null){
-                                    Response.writeResponse(Response.notFound("User not found."), writer);
-                                    return;
-                                }
-
-                                // Since it is known, iterate through all member guilds and add the IDs of them if our user is a part of that guild.
-                                List<String> snowflakes = new ArrayList<>();
-                                jda.getGuilds().forEach(guild -> {
-                                    if(guild.getMemberById(UID) != null && PermissionChecker.userHasPermission(guild.getMemberById(UID), Permission.MANAGE_SERVER)){
-                                        snowflakes.add(guild.getId());
-                                    }
-                                });
-
-                                // Assemble JSON and send back.
-                                StringBuilder json = new StringBuilder();
-                                json.append("{\"guilds\":[");
-                                for(String guild : snowflakes){
-                                    json.append(String.format("\"%s\",", guild));
-                                }
-
-                                if(snowflakes.size() != 0){
-                                    json.deleteCharAt(json.length()-1);
-                                }
-
-                                json.append("]}");
-                                Response.writeResponse(Response.okJSON(json.toString()), writer);
                             });
+
+                            // Assemble JSON and send back.
+                            StringBuilder json = new StringBuilder();
+                            json.append("{\"guilds\":[");
+                            for(String guild : snowflakes){
+                                json.append(String.format("\"%s\",", guild));
+                            }
+
+                            if(snowflakes.size() != 0){
+                                json.deleteCharAt(json.length()-1);
+                            }
+
+                            json.append("]}");
+                            Response.writeResponse(Response.okJSON(json.toString()), writer);
+
                         } else {
                             Response.writeResponse(Response.badRequest("Unknown endpoint."), writer);
                         }
@@ -218,24 +195,8 @@ public class Client extends Thread {
                         // path is "/guilds/" or "/guilds". Everything else is assumed to be a specific request.
                         if(req.getPath().equals("/guilds/") || req.getPath().equals("/guilds")){
                             // General request. Get all guilds QuanTec is part of, distill into list and return.
-                            Object waiter = new Object();
                             List<String> guilds = new ArrayList<>();
-                            scheduleNewJDATask(jda -> {
-                                List<Guild> guildList = jda.getGuilds();
-                                for(Guild guild : guildList){
-                                    guilds.add(guild.getId());
-                                }
-                                synchronized (waiter) {
-                                    waiter.notifyAll();
-                                }
-                            });
-                            try {
-                                synchronized (waiter) {
-                                    waiter.wait();
-                                }
-                            } catch (InterruptedException e){
-                                e.printStackTrace();
-                            }
+                            jda.getGuilds().forEach(guild -> guilds.add(guild.getId()));
 
                             StringBuilder json = new StringBuilder();
                             json.append("{\"guilds\":[");
@@ -255,38 +216,15 @@ public class Client extends Thread {
                                 idStr = idStr.substring(idStr.indexOf('/') + 1);
                             }
 
-                            // I sure do love unnecessary temp variables for Java's weird lambda rules!
-                            final String subjId = idStr;
-                            Object waiter = new Object();
-                            List<String> ret = new ArrayList<>();
-                            scheduleNewJDATask(jda -> {
-                                Guild guild = jda.getGuildById(subjId);
+                            Guild guild = jda.getGuildById(idStr);
 
-                                if(guild != null){
-                                    ret.add(String.valueOf(guild.getIdLong()));
-                                    ret.add(guild.getName());
-                                    ret.add(guild.getIconUrl());
-                                }
-
-                                synchronized (waiter) {
-                                    waiter.notifyAll();
-                                }
-                            });
-                            try {
-                                synchronized (waiter) {
-                                    waiter.wait();
-                                }
-                            } catch (InterruptedException e){
-                                e.printStackTrace();
-                            }
-
-                            if(ret.isEmpty()){
+                            if(guild == null){
                                 Response.writeResponse(Response.notFound("JDA returned null"), writer);
                             } else {
                                 String json = String.format("{\"id\":\"%s\",\"name\":\"%s\",\"iconURL\":\"%s\"}",
-                                        ret.get(0),
-                                        ret.get(1),
-                                        ret.get(2)
+                                        guild.getId(),
+                                        guild.getName(),
+                                        guild.getIconUrl()
                                 );
                                 Response.writeResponse(Response.okJSON(json), writer);
                             }
@@ -299,38 +237,15 @@ public class Client extends Thread {
                             idStr = idStr.substring(idStr.indexOf('/') + 1);
                         }
 
-                        // I sure do love unnecessary temp variables for Java's weird lambda rules!
-                        final String subjId = idStr;
-                        Object waiter = new Object();
-                        List<String> ret = new ArrayList<>();
-                        scheduleNewJDATask(jda -> {
-                            Emoji emoji = jda.getEmojiById(subjId);
+                        Emoji emoji = jda.getEmojiById(idStr);
 
-                            if(emoji != null){
-                                ret.add(subjId);
-                                ret.add(emoji.getName());
-                                ret.add("https://cdn.discordapp.com/emojis/"+subjId+".png");
-                            }
-
-                            synchronized (waiter) {
-                                waiter.notifyAll();
-                            }
-                        });
-                        try {
-                            synchronized (waiter) {
-                                waiter.wait();
-                            }
-                        } catch (InterruptedException e){
-                            e.printStackTrace();
-                        }
-
-                        if(ret.isEmpty()){
+                        if(emoji == null){
                             Response.writeResponse(Response.notFound("JDA returned null"), writer);
                         } else {
                             String json = String.format("{\"id\":\"%s\",\"name\":\"%s\",\"iconURL\":\"%s\"}",
-                                    ret.get(0),
-                                    ret.get(1),
-                                    ret.get(2)
+                                    idStr,
+                                    emoji.getName(),
+                                    "https://cdn.discordapp.com/emojis/"+idStr+".png"
                             );
                             Response.writeResponse(Response.okJSON(json), writer);
                         }

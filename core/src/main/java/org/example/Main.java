@@ -93,7 +93,7 @@ public class Main {
         jda.addEventListener(commandListener);
 
         // Start web server.
-        WebServer webServer = new WebServer(jda, 8444, botVers, pluginManager, halter);
+        WebServer webServer = new WebServer(jda, 8444, pluginManager, halter);
 
         LOGGER.info("Command listener set up and WebServer is starting. Initializing plugins...");
         MessageBus messageBus = new MessageBus();
