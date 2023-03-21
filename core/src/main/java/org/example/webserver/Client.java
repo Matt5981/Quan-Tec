@@ -1,12 +1,15 @@
 package org.example.webserver;
 
 import net.dv8tion.jda.api.JDA;
+import net.dv8tion.jda.api.Permission;
 import net.dv8tion.jda.api.entities.Guild;
 import net.dv8tion.jda.api.entities.User;
+import net.dv8tion.jda.api.entities.UserSnowflake;
 import net.dv8tion.jda.api.entities.emoji.Emoji;
 import org.example.plugins.PluginManager;
 import org.example.plugins.QuanTecPlugin;
 import org.example.utils.Halter;
+import org.example.utils.PermissionChecker;
 import org.example.webserver.utils.Request;
 import org.example.webserver.utils.Response;
 
@@ -25,6 +28,8 @@ import java.util.function.Consumer;
         === Information Provider === TODO remove into plugin.
         /users/{snowflake}
             GET - returns the result of getting this user's info from JDA.
+        /users/manageserver/{snowflake}
+            GET - returns, in JSON, a list of guild snowflakes where the provided user has MANAGE_SERVER. TODO authenticate this on QTOW.
         /guilds
             GET - Returns a list of snowflakes corresponding to the servers that QuanTec is a member of, and as such the servers whose emotes and users can be accessed through the /users and /emojis endpoints.
         /guilds/{snowflake}
@@ -32,9 +37,9 @@ import java.util.function.Consumer;
         /emojis/{snowflake}
             GET - Returns the details of a custom emoji, specifically the ID, name and image link.
         === Control ===
-        TODO TEST /core/vers
+        /core/vers
             GET - Returns JSON with the bot's version.
-        TODO TEST /core/plugins
+        /core/plugins
             GET - Returns JSON with a list of plugins currently running on the bot.
         TODO /core/plugins/reload
             GET - Causes QuanTec to reload all plugins.
@@ -59,6 +64,7 @@ public class Client extends Thread {
     private final PluginManager pluginManager;
     private final Halter halter;
 
+    @Deprecated
     private void scheduleNewJDATask(Consumer<JDA> task){
         JDATasks.add(task);
         synchronized (JDATasks) {
@@ -119,40 +125,87 @@ public class Client extends Thread {
                             Response.writeResponse(Response.methodNotAllowed("request to /users must be GET"), writer);
                             continue;
                         }
-                        // A bit easier, since this gets to wait for a JDA job to complete.
-                        String userID = req.getPath().replaceAll("/users/", "");
-                        Object waiter = new Object();
-                        final User[] user = new User[1];
-                        user[0] = null;
-                        scheduleNewJDATask(jda -> {
-                            user[0] = jda.getUserById(userID);
-                            synchronized (waiter) {
-                                waiter.notifyAll();
+
+                        String fmtPath = req.getPath().substring(1);
+                        if(fmtPath.split("/").length == 2) {
+
+
+                            // A bit easier, since this gets to wait for a JDA job to complete.
+                            String userID = req.getPath().replaceAll("/users/", "");
+                            Object waiter = new Object();
+                            final User[] user = new User[1];
+                            user[0] = null;
+                            scheduleNewJDATask(jda -> {
+                                user[0] = jda.getUserById(userID);
+                                synchronized (waiter) {
+                                    waiter.notifyAll();
+                                }
+                            });
+
+                            try {
+                                synchronized (waiter) {
+                                    waiter.wait();
+                                }
+                            } catch (InterruptedException e) {
+                                // Ignored
                             }
-                        });
 
-                        try {
-                            synchronized (waiter) {
-                                waiter.wait();
+                            // Should be done by now, so let's dismantle that user object into some nice compact JSON.
+                            if (user[0] != null) {
+                                User subj = user[0];
+
+                                String respJson = String.format("{\"%s\":{\"name\":\"%s\",\"id\":\"%s\",\"avatarUrl\":\"%s\"}}",
+                                        subj.getId(),
+                                        subj.getAsTag(),
+                                        subj.getIdLong(),
+                                        subj.getAvatarUrl()
+                                );
+
+                                Response.writeResponse(Response.okJSON(respJson), writer);
+                            } else {
+                                Response.writeResponse(Response.notFound("JDA returned null"), writer);
                             }
-                        } catch (InterruptedException e){
-                            // Ignored
-                        }
+                        } else if(fmtPath.split("/").length == 3 && fmtPath.startsWith("users/manageserver/")) {
+                            scheduleNewJDATask(jda -> {
+                                // Return array of all servers where the user is both a member and has the MANAGE_SERVER permission through any role.
+                                String UID = fmtPath.replace("users/manageserver/", "");
+                                try {
+                                    Long.parseLong(UID);
+                                } catch (NumberFormatException e){
+                                    Response.writeResponse(Response.badRequest("Invalid snowflake provided."), writer);
+                                    return;
+                                }
 
-                        // Should be done by now, so let's dismantle that user object into some nice compact JSON.
-                        if(user[0] != null){
-                            User subj = user[0];
+                                // Check if user is known by quantec.
+                                if(jda.getUserById(UID) == null){
+                                    Response.writeResponse(Response.notFound("User not found."), writer);
+                                    return;
+                                }
 
-                            String respJson = String.format("{\"%s\":{\"name\":\"%s\",\"id\":\"%s\",\"avatarUrl\":\"%s\"}}",
-                                    subj.getId(),
-                                    subj.getAsTag(),
-                                    subj.getIdLong(),
-                                    subj.getAvatarUrl()
-                            );
+                                // Since it is known, iterate through all member guilds and add the IDs of them if our user is a part of that guild.
+                                List<String> snowflakes = new ArrayList<>();
+                                jda.getGuilds().forEach(guild -> {
+                                    if(guild.getMemberById(UID) != null && PermissionChecker.userHasPermission(guild.getMemberById(UID), Permission.MANAGE_SERVER)){
+                                        snowflakes.add(guild.getId());
+                                    }
+                                });
 
-                            Response.writeResponse(Response.okJSON(respJson), writer);
+                                // Assemble JSON and send back.
+                                StringBuilder json = new StringBuilder();
+                                json.append("{\"guilds\":[");
+                                for(String guild : snowflakes){
+                                    json.append(String.format("\"%s\",", guild));
+                                }
+
+                                if(snowflakes.size() != 0){
+                                    json.deleteCharAt(json.length()-1);
+                                }
+
+                                json.append("]}");
+                                Response.writeResponse(Response.okJSON(json.toString()), writer);
+                            });
                         } else {
-                            Response.writeResponse(Response.notFound("JDA returned null"), writer);
+                            Response.writeResponse(Response.badRequest("Unknown endpoint."), writer);
                         }
                     }
 

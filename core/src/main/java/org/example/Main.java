@@ -95,7 +95,7 @@ public class Main {
         // Start web server.
         WebServer webServer = new WebServer(jda, 8444, botVers, pluginManager, halter);
 
-        LOGGER.info("WebServer started on port 8444/tcp. Initializing plugins...");
+        LOGGER.info("Command listener set up and WebServer is starting. Initializing plugins...");
         MessageBus messageBus = new MessageBus();
 
         pluginManager.initializePlugins(jda, messageBus, commandListener, webServer);
