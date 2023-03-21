@@ -43,10 +43,10 @@ import static org.example.webserver.Client.parseFormData;
         /images/tolerance
             POST - gets the tolerance of the image filter, or how similar an image has to be for it to remove it. 0-100 (percent).
             PUT - updates the tolerance of the image filter.
-        /words TODO unify with /images/{snowflake}'s system of guild selection to simplify input.
+        /words/{guildsnowflake}
             GET - returns JSON with a list of banned words (case insensitive)
-            PUT - containing valid JSON with a list of strings, will add all strings to the list of banned words.
-            DELETE - containing valid JSON with a list of strings, deletes any strings in the banned word list from the banned word list.
+            PUT - containing valid JSON with a list of strings, will add all strings to the list of banned words. TODO use path instead of JSON
+            DELETE - containing valid JSON with a list of strings, deletes any strings in the banned word list from the banned word list. TODO path instead of JSON
  */
 public class CensorPlugin implements QuanTecPlugin {
     private CensorManager censorManager;
@@ -372,14 +372,10 @@ public class CensorPlugin implements QuanTecPlugin {
         RESTmappings.put("words", (req, writer) -> {
                 switch(req.getMethod()){
                     case "GET" -> {
-                        if(req.getHeaders().get("content-type") == null || !req.getHeaders().get("content-type").equals("application/x-www-form-urlencoded")){
-                            Response.writeResponse(Response.badRequest("Content type invalid or missing, expected application/x-www-form-urlencoded."), writer);
-                        } else if(req.getContent() == null) {
-                            Response.writeResponse(Response.badRequest("Content must not be empty."), writer);
-                        } else {
+                            String subj = req.getPath().replace("/words/", "");
                             // Return list of banned words from censorManager.
-                            Response.writeResponse(Response.okJSON(censorManager.getBannedWordsJSON(req.getContent())), writer);
-                        }
+                            Response.writeResponse(Response.okJSON(censorManager.getBannedWordsJSON(subj)), writer);
+
                     }
 
                     case "PUT" -> {
