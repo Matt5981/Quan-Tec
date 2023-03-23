@@ -27,7 +27,8 @@ public class banImage implements Command {
                 for(CensorManager.Image image : toBan){
                     censorManager.addImage(event.getGuild().getId(), image);
                 }
-                event.getChannel().sendMessage("Banned "+toBan.size()+" images successfully.").queue();
+                event.getChannel().sendMessage("Banned "+toBan.size()+" images successfully. Your original message has been deleted to hide embeds.").queue();
+                event.getMessage().delete().queue();
             }
         }
     }

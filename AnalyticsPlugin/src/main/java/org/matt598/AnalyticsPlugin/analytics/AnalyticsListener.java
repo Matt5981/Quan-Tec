@@ -24,6 +24,52 @@ public class AnalyticsListener extends ListenerAdapter {
         this.analyticsManager = analyticsManager;
     }
 
+    private String getHash(File file){
+        try(FileInputStream fileInputStream = new FileInputStream(file)) {
+            // Hash and compare.
+            // I DID NOT WRITE THIS CODE - borrowed from https://howtodoinjava.com/java/java-security/sha-md5-file-checksum-hash/
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+
+            byte[] inBuffer = new byte[1024];
+            int len = 0;
+
+            while((len = fileInputStream.read(inBuffer)) != -1){
+                digest.update(inBuffer, 0, len);
+            }
+
+            return new String(Base64.getEncoder().encode(digest.digest()));
+            // END I DID NOT WRITE THIS CODE
+
+        } catch (IOException | NoSuchAlgorithmException e){
+            // Ignored
+        }
+        return null;
+    }
+
+    private List<String> getAllLinks(String subject){
+        List<String> imageLinks = new ArrayList<>();
+
+        for(String proto : new String[]{"https://", "http://"}){
+                Pattern pattern = Pattern.compile(String.format("(%s).*?(\\.gif)", proto));
+                Matcher matcher = pattern.matcher(subject);
+                while(matcher.find()){
+                    imageLinks.add(matcher.group());
+                }
+        }
+        return imageLinks;
+    }
+
+    private String hashText(String text){
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update(text.getBytes(), 0, text.getBytes().length);
+            return new String(Base64.getEncoder().encode(digest.digest()));
+        } catch (NoSuchAlgorithmException e){
+            // Ignored
+        }
+        return null;
+    }
+
     private void checkForFlurogingerPass(MessageReceivedEvent event){
         if(event.getMember() != null && (event.getMember().getId().equals("332438399829016577") || event.getMember().getId().equals("300211457805778945")) && event.getMessage().getAttachments().size() != 0){
             // Check attachment hash.
@@ -60,35 +106,25 @@ public class AnalyticsListener extends ListenerAdapter {
                     File file = new File("/tmp/quantec/fluroginger-pass-chk.tmp");
                     file.createNewFile();
                     attachment.getProxy().downloadToFile(file).thenRun(() -> {
-                        try(FileInputStream fileInputStream = new FileInputStream(file)) {
-                            // Hash and compare.
-                            // I DID NOT WRITE THIS CODE - borrowed from https://howtodoinjava.com/java/java-security/sha-md5-file-checksum-hash/
-                            MessageDigest digest = MessageDigest.getInstance("SHA-256");
 
-                            byte[] inBuffer = new byte[1024];
-                            int len = 0;
+                            String hash = getHash(file);
 
-                            while((len = fileInputStream.read(inBuffer)) != -1){
-                                digest.update(inBuffer, 0, len);
-                            }
-
-                            // Churn hash into Base64, so we can check it against a reference.
-                            String digestEncoded = new String(Base64.getEncoder().encode(digest.digest()));
-                            if(digestEncoded.equals("7Odpru8mxub6QCTGsP5J5YWz3ajJlMTONd5UF7Jielo=")){
+                            if(hash != null && hash.equals("7Odpru8mxub6QCTGsP5J5YWz3ajJlMTONd5UF7Jielo=")){
                                 analyticsManager.setFlurogingerPassAppearances(analyticsManager.getFlurogingerPassAppearances() + 1);
                             }
-
-                        } catch (IOException | NoSuchAlgorithmException e){
-                            // Ignored
-                        }
                     });
                 } catch (IOException e){
                     // Ignored
                 }
             }
         } else if(event.getMember() != null && (event.getMember().getId().equals("332438399829016577") || event.getMember().getId().equals("300211457805778945"))){
-            if(event.getMessage().getContentRaw().contains("***REMOVED***")){
-                analyticsManager.setFlurogingerPassAppearances(analyticsManager.getFlurogingerPassAppearances() + 1);
+            for(String link : getAllLinks(event.getMessage().getContentRaw())){
+
+                String hash = hashText(link);
+
+                if(hash != null && hash.equals("+1VUovFv+Ukqx5S64SblffPmJOJh3PQb+sD/pAXsuuE=")){
+                    analyticsManager.setFlurogingerPassAppearances(analyticsManager.getFlurogingerPassAppearances() + 1);
+                }
             }
         }
     }

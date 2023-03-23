@@ -61,7 +61,8 @@ public interface QuanTecPlugin {
 
     /** <h2>getCommands</h2>
      * A list of command objects for QuanTec to screen for when evaluating commands. Note that if two commands are added with the same name, QuanTec
-     * will reject one of them.
+     * will reject one of them. Additionally, QuanTec internally accesses this as a reference to a list of commands, so it is advised to not create the
+     * list inside this method, instead creating it in the initialize/postinitialize methods and return a reference to it here to reduce memory impact.
      * @return A list of command objects as above.
      */
     default List<Command> getCommands(){
@@ -70,7 +71,8 @@ public interface QuanTecPlugin {
 
     /** <h2>getRESTEndpoints</h2>
      * A set of REST endpoint methods as a map, wherein the key is the 'root' node (e.g., using "images" for this string would redirect all REST queries to "/images" and "/images/*")
-     * and the value is a function reacting to the request via the provided output stream.
+     * and the value is a function reacting to the request via the provided output stream. Additionally, QuanTec internally accesses this as a reference to a hashmap, so it is advised
+     * to not create the map inside this method, instead creating it in the initialize/postinitialize methods and return a reference to it here to reduce memory impact.
      * @return As above.
      */
     default Map<String, BiConsumer<Request, OutputStream>> getRESTEndpoints() {

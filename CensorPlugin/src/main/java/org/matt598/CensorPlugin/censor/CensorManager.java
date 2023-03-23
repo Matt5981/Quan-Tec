@@ -309,11 +309,25 @@ public class CensorManager implements Serializable {
         return false;
     }
 
+    public boolean setImageAdaptive(String guild, String imageName, boolean adaptive){
+        if(censorData.get(guild) != null){
+            for(Image image : censorData.get(guild).getBannedImages()){
+                if(image.getNickname().equals(imageName)){
+                    image.setAdaptive(adaptive);
+                    handleMutation();
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     public List<Image> getBannedImages(String guild){
         if(censorData.get(guild) != null){
             return censorData.get(guild).getBannedImages();
+        } else {
+            return new ArrayList<>();
         }
-        return null;
     }
 
     public void setTolerance(String guild, int tolerance){
@@ -357,7 +371,7 @@ public class CensorManager implements Serializable {
     public String getBannedImagesJSON(String guild){
         if(censorData.get(guild) != null){
             StringBuilder stringBuilder = new StringBuilder();
-            stringBuilder.append("{\"bannedImages\":[");
+            stringBuilder.append(String.format("{\"tolerance\":\"%d\",\"bannedImages\":[", censorData.get(guild).getBannedImageTolerancePcnt()));
             for(Image image : censorData.get(guild).getBannedImages()){
                 stringBuilder.append(String.format("{\"name\":\"%s\",\"adaptive\":\"%s\",\"size\":%d},",
                         image.getNickname(),
@@ -372,7 +386,7 @@ public class CensorManager implements Serializable {
             return stringBuilder.toString();
         }
 
-        return "{\"bannedImages\":[]}";
+        return "{\"tolerance\":\"95\",\"bannedImages\":[]}";
     }
 
     public boolean censorImage(String guild, Message message, boolean checkOnly){

@@ -14,7 +14,7 @@ public class getBannedImages implements Command {
     @Override
     public void run(MessageReceivedEvent event){
 
-        if(censorManager.getBannedImages(event.getGuild().getId()) == null || censorManager.getBannedImages(event.getGuild().getId()).isEmpty()){
+        if(censorManager.getBannedImages(event.getGuild().getId()).isEmpty()){
             event.getChannel().sendMessage("**No images are banned on this server!** Use `q!banImage` to ban inappropriate images.").queue();
             return;
         }
